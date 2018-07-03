@@ -1,0 +1,67 @@
+node{
+    stage(&apos;Preparation&apos;) {
+        try {
+            cleanWs()
+            checkout([$class: &apos;GitSCM&apos;, branches: [[name: &apos;*/master&apos;]], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: &apos;bcef4c8e-9601-444c-a58d-c632cf86aa13&apos;, url: &apos;ssh://git@114.116.14.72:10022/VGC_RTM/test.git&apos;]]]) 
+        } catch(err) {
+            //sendJobFailEmail(&quot;Job Name - Preparation Failed!&quot;)
+            error &quot;Prepation Failed: &quot; + err
+        }
+    }
+
+    stage(&apos;Unit Test&apos;) {
+        try{
+            sh &quot;/usr/local/maven/bin/mvn test -Dmaven.test.failure.ignore=false&quot;
+            // JUnit Results
+            junit &apos;target/surefire-reports/*.xml&apos;
+            jacoco buildOverBuild: true, deltaClassCoverage: &apos;20&apos;, deltaMethodCoverage: &apos;20&apos;
+            archive &apos;target/*.war&apos;
+        }catch(err){
+            //sendJobFailEmail(&quot;ProjectName Dev - Unit Test Failed!&quot;)
+            error &quot;Unit Test Failed: &quot; + err
+        }
+    }
+    stage(&apos;Code Analysis&apos;) {
+        try {
+            sh &quot;/usr/local/maven/bin/mvn dependency:resolve clean package sonar:sonar -Dsonar.analysis.mode=&quot;
+            echo &apos;sonar executed...&apos;
+        } catch(err) {
+            echo &apos;error occured:&apos; + err
+        } 
+    }
+
+    stage(&quot;SonarQube Quality Gate&quot;) 
+    {
+        try {
+            def sonarServerUrl=&quot;http://192.168.0.123:9000/&quot;
+            def response2 = httpRequest url : sonarServerUrl + &quot;/api/qualitygates/project_status?projectKey=org.springframework.samples:spring-petclinic&quot;, authentication: &apos;SONAR-ADMIN&apos;
+            def qualitygate =  readJSON text: response2.content
+            echo qualitygate.toString()
+            if (&quot;ERROR&quot;.equals(qualitygate[&quot;projectStatus&quot;][&quot;status&quot;])) {
+                emailext body: &quot;ProjectName - Build # &apos;$env.BUILD_NUMBER&apos; - FAILED: Check console output at &apos;$env.BUILD_URL&apos; to view the results. Quality Gate: &apos;$qualitygate.toString()&apos;&quot;, recipientProviders: [[$class: &apos;UpstreamComitterRecipientProvider&apos;], [$class: &apos;RequesterRecipientProvider&apos;],[$class: &apos;CulpritsRecipientProvider&apos;]], subject: &quot;Order - Build # &apos;$env.BUILD_NUMBER&apos; - Quality Gate Failure&quot;
+                error  &quot;Quality Gate failure&quot;
+            }
+        } catch(err) {
+            //sendJobFailEmail(&quot;ProjectName Dev - Error Occour in SonarQube Quality Gate!&quot;)
+            error &quot;Error Occour in SonarQube Quality Gate: &quot; + err
+        }
+    }
+    
+    stage(&quot;Build&quot;) {
+        try {
+            sh &quot;/usr/local/maven/bin/mvn clean install -Dmaven.test.skip=true&quot;
+        } catch(err) {
+            //sendJobFailEmail(&quot;ProjectName Dev - Build Failed!&quot;)
+            error &quot;Build Failed : &quot; + err
+        }
+    }
+
+    stage(&quot;Upload to Nexus&quot;) {
+        try {
+            sh &quot;/usr/local/maven/bin/mvn deploy -Dmaven.test.skip=true&quot;
+        } catch(err) {
+            //sendJobFailEmail(&quot;ProjectName Dev - Upload to Nexus Failed!&quot;)
+            error &quot;Upload to Nexus Failed : &quot; + err
+        }
+    } 
+}
